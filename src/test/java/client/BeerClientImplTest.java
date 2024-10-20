@@ -19,13 +19,35 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class BeerClientImplTest {
+public class BeerClientImplTest {
 
     BeerClientImpl beerClient;
 
     @BeforeEach
     void setUp() {
         beerClient = new BeerClientImpl(new WebClientConfig().webClient());
+    }
+
+    private Beer insertTestingBeer() {
+        Beer beer = Beer.builder()
+                        .beerName("Sai Gon Xanh")
+                        .beerStyle("LAGER")
+                        .upc(String.valueOf(System.currentTimeMillis()))
+                        .quantityOnHand(1000)
+                        .price(new BigDecimal("10.15"))
+                        .build();
+        Mono<ResponseEntity<Void>> dataResponseMono = beerClient.createBeer(beer);
+        ResponseEntity dataResponse = dataResponseMono.block();
+        String[] items = dataResponse.getHeaders()
+                                     .get("Location")
+                                     .get(0)
+                                     .split("/");
+        String id = items[items.length - 1];
+
+        Beer testingBeer = beerClient.getBeerById(UUID.fromString(id), false)
+                                     .block();
+        System.out.println(String.format("Testing beer inserted with id=%s, upc=%s", testingBeer.getId(), testingBeer.getUpc()));
+        return testingBeer;
     }
 
     @Test
@@ -51,7 +73,7 @@ class BeerClientImplTest {
 
     @Test
     void testListBeers_NoRecord() {
-        Mono<BeerPagedList> beerPagedListMono = beerClient.listBeers(3, 10, null, null, null);
+        Mono<BeerPagedList> beerPagedListMono = beerClient.listBeers(10, 10, null, null, null);
 
         BeerPagedList pageList = beerPagedListMono.block();
         assertNotNull(pageList);
@@ -107,7 +129,8 @@ class BeerClientImplTest {
 
     @Test
     void testUpdateBeer() {
-        Beer current = beerClient.getBeerById(UUID.fromString("e2735cc7-6958-4da9-966e-715dcc1dc859"), false)
+        Beer testingBeer = insertTestingBeer();
+        Beer current = beerClient.getBeerById(testingBeer.getId(), false)
                                  .block();
         Beer beer = Beer.builder()
                         .beerName("Sai Gon Do")
@@ -124,25 +147,8 @@ class BeerClientImplTest {
 
     @Test
     void testDeleteBeer() {
-        //Insert a beer for deletion first
-        Beer beer = Beer.builder()
-                        .beerName("Sai Gon Xanh")
-                        .beerStyle("LAGER")
-                        .upc(String.valueOf(System.currentTimeMillis()))
-                        .quantityOnHand(1000)
-                        .price(new BigDecimal("10.15"))
-                        .build();
-        Mono<ResponseEntity<Void>> dataResponseMono = beerClient.createBeer(beer);
-        ResponseEntity dataResponse = dataResponseMono.block();
-        String[] items = dataResponse.getHeaders()
-                                     .get("Location")
-                                     .get(0)
-                                     .split("/");
-        String id = items[items.length - 1];
-
-        System.out.println("Deletion id: " + id);
-
-        Mono<ResponseEntity<Void>> responseEntityMono = beerClient.deleteBeer(UUID.fromString(id));
+        Beer testingBeer = insertTestingBeer();
+        Mono<ResponseEntity<Void>> responseEntityMono = beerClient.deleteBeer(testingBeer.getId());
 
         ResponseEntity response = responseEntityMono.block();
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
@@ -178,14 +184,16 @@ class BeerClientImplTest {
         CountDownLatch countDownLatch = new CountDownLatch(1);
 
         beerClient.listBeers(null, null, null, null, null)
-                .map(beerPageList -> beerPageList.getContent().get(0).getId())
-                .map(beerId -> beerClient.getBeerById(beerId, false))
-                .flatMap(beer -> beer)
-                .subscribe(beer -> {
-                    beerName.set(beer.getBeerName());
-                    assertEquals("Mango Bobs", beer.getBeerName());
-                    countDownLatch.countDown();
-                });
+                  .map(beerPageList -> beerPageList.getContent()
+                                                   .get(0)
+                                                   .getId())
+                  .map(beerId -> beerClient.getBeerById(beerId, false))
+                  .flatMap(beer -> beer)
+                  .subscribe(beer -> {
+                      beerName.set(beer.getBeerName());
+                      assertEquals("Mango Bobs", beer.getBeerName());
+                      countDownLatch.countDown();
+                  });
 
         countDownLatch.await();
         assertEquals("Mango Bobs", beerName.get());
